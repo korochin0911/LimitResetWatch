@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LimitResetWatch/LimitResetWatch.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LimitResetWatch.Tests/LimitResetWatch.Tests.csproj" />
+  </Folder>
+</Solution>
