@@ -203,6 +203,9 @@ internal sealed class TrayIconSlot : IDisposable
         icon.Visible = true;
     }
 
+    /// <summary>トレイから外す。NotifyIcon は作り直さないので、識別番号は変わらない。</summary>
+    public void Hide() => icon.Visible = false;
+
     public void Dispose()
     {
         icon.Visible = false;

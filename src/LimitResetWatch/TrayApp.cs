@@ -12,9 +12,9 @@ internal sealed class TrayApp : ApplicationContext
     readonly ContextMenuStrip menu;
     readonly FloatingWindow floating;
     readonly Dictionary<ProviderId, TrayIconSlot> slots = [];
+    readonly TrayIconSlot fallbackSlot;
     readonly System.Windows.Forms.Timer tickTimer = new() { Interval = 30_000 };
     readonly System.Windows.Forms.Timer pollTimer = new();
-    TrayIconSlot? fallbackSlot;
     ToolStripMenuItem floatingItem = null!;
     ToolStripMenuItem startupItem = null!;
     ToolStripMenuItem intervalItem = null!;
@@ -23,6 +23,20 @@ internal sealed class TrayApp : ApplicationContext
     {
         poller = new UsagePoller(ProviderRegistry.CreateAll(), SnapshotStore.Load(), persist: true);
         menu = BuildMenu();
+
+        // Windows はトレイアイコンの「常に表示」を、実行ファイルとアイコンの識別番号の組で覚える。
+        // WinForms の NotifyIcon は作った順に 1, 2, 3… と番号を振るので、起動直後に全部のアイコンを
+        // 決まった順（Claude 1、Codex 2、Gemini 3、Grok 4、アプリのアイコン 5）で作り、以後は作り直さずに
+        // 表示・非表示だけを切り替える。ここより前に NotifyIcon を作らないこと。
+        foreach (var id in ProviderStyle.Order.Where(ProviderStyle.InTray))
+        {
+            var slot = new TrayIconSlot(menu);
+            slot.Clicked += ToggleFloating;
+            slots[id] = slot;
+        }
+        fallbackSlot = new TrayIconSlot(menu);
+        fallbackSlot.Clicked += ToggleFloating;
+
         floating = new FloatingWindow(menu);
         floating.PositionCommitted += (_, _) =>
         {
@@ -102,41 +116,31 @@ internal sealed class TrayApp : ApplicationContext
         var now = DateTimeOffset.Now;
         var lightTaskbar = Theme.TaskbarLight;
 
-        foreach (var id in ProviderStyle.Order.Where(ProviderStyle.InTray))
+        var shown = 0;
+        foreach (var (id, slot) in slots)
         {
             var snapshot = poller.Get(id);
             if (snapshot is null || !UsageMath.IsVisible(snapshot))
             {
-                if (slots.Remove(id, out var removed)) removed.Dispose();
+                slot.Hide();
                 continue;
-            }
-            if (!slots.TryGetValue(id, out var slot))
-            {
-                slot = new TrayIconSlot(menu);
-                slot.Clicked += ToggleFloating;
-                slots[id] = slot;
             }
             var (model, tooltip) = TrayPresenter.Build(snapshot, now, lightTaskbar);
             slot.Update(model, tooltip);
+            shown++;
         }
 
         // サービスのアイコンが 1 つも無いときも、メニューを開けるようにアプリのアイコンを出しておく。
-        if (slots.Count == 0)
+        if (shown == 0)
         {
-            if (fallbackSlot is null)
-            {
-                fallbackSlot = new TrayIconSlot(menu);
-                fallbackSlot.Clicked += ToggleFloating;
-            }
             var tooltip = poller.IsPolling || poller.LastPollAt is null
                 ? "LimitResetWatch（取得中…）"
                 : "LimitResetWatch（使用量を取得できるサービスがない）";
             fallbackSlot.Update(TrayPresenter.Fallback(lightTaskbar), tooltip);
         }
-        else if (fallbackSlot is not null)
+        else
         {
-            fallbackSlot.Dispose();
-            fallbackSlot = null;
+            fallbackSlot.Hide();
         }
 
         var visible = poller.All.Where(UsageMath.IsVisible).ToList();
@@ -184,8 +188,7 @@ internal sealed class TrayApp : ApplicationContext
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         foreach (var slot in slots.Values) slot.Dispose();
         slots.Clear();
-        fallbackSlot?.Dispose();
-        fallbackSlot = null;
+        fallbackSlot.Dispose();
         floating.CloseForExit();
         ExitThread();
     }
